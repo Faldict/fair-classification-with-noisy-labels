@@ -16,7 +16,9 @@ from utils import flip, accuracy, violation
 from ProxyConstraint import ProxyEqualizedOdds
 from PeerLoss import PeerLoss
 
-error_rate = [[0.35, 0.45], [0.10, 0.20]]
+import matplotlib.pyplot as plt
+
+error_rate = [[0.15, 0.05], [0.10, 0.20]]
 shap.initjs()
 
 X_raw, Y = shap.datasets.adult()
@@ -51,27 +53,38 @@ Y_noised = flip(Y_train, A_train, error_rate=error_rate)
 print(f"Start running experiment with Peer Loss")
 
 delta = [1.-error_rate[0][0]-error_rate[0][1], 1.-error_rate[1][0]-error_rate[1][1]]
-
+alphas = [0.05, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
 fairness_constraints = [0.008 * i for i in range(1, 11)]
-all_results_train, all_results_test = [], []
+all_results_train, all_results_test = [[] for _ in range(len(alphas))], [[] for _ in range(len(alphas))]
 
-for eps in fairness_constraints:  
-    sweep = ExponentiatedGradient(PeerLoss(A_train, delta),
-                        # constraints=ProxyEqualizedOdds(error_rate=error_rate),
-                        constraints=EqualizedOdds(),
-                        eps=eps)        
-    sweep.fit(X_train, Y_noised, sensitive_features=A_train)
+fp = open('logs/peer_loss_result.txt', 'w')
+for i in range(len(alphas)):
+    alpha = alphas[i]
+    for eps in fairness_constraints:  
+        sweep = ExponentiatedGradient(PeerLoss(A_train, delta, alpha=alpha),
+                            constraints=ProxyEqualizedOdds(error_rate=error_rate),
+                            # constraints=EqualizedOdds(),
+                            eps=eps)        
+        sweep.fit(X_train, Y_noised, sensitive_features=A_train)
 
-    prediction_train = sweep.predict(X_train)
-    prediction_test = sweep.predict(X_test)
+        prediction_train = sweep.predict(X_train)
+        prediction_test = sweep.predict(X_test)
 
-    accuracy_train = accuracy(prediction_train, Y_train)
-    accuracy_test = accuracy(prediction_test, Y_test)
-    all_results_train.append(accuracy_train)
-    all_results_test.append(accuracy_test)
+        accuracy_train = accuracy(prediction_train, Y_train)
+        accuracy_test = accuracy(prediction_test, Y_test)
+        violation_train = violation(prediction_train, Y_train, A_train)
+        violation_test = violation(prediction_test, Y_test, A_test)
+        all_results_train[i].append(accuracy_train)
+        all_results_test[i].append(accuracy_test)
 
-    print(f"Running fairness constraint {eps}, Train Accuracy {accuracy_train}, Test Accuracy {accuracy_test}")
+        print(f"Running alpha {alpha}, fairness constraint {eps}, Train Accuracy {accuracy_train}, Test Accuracy {accuracy_test}, Train Violation {violation_train}, Test Violation {violation_test}.")
+        fp.write(f"{alpha},{eps},{accuracy_train},{accuracy_test},{violation_train},{violation_test}\n")
+fp.close()
 
-with open('logs/PeerLossResult2.txt', 'w') as f:
-    for eps, result_train, result_test in zip(fairness_constraints, all_results_train, all_results_test):
-        f.write(f"{eps}\t{result_train}\t{result_test}\n")
+plt.style.use('seaborn')
+for i in range(len(alphas)):
+    plt.plot(fairness_constraints, all_results_test[i], label=f"alpha={alphas[i]}")
+plt.xlabel('Violation')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.show()

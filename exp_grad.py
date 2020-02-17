@@ -1,6 +1,7 @@
 import shap
 import copy
 import time
+import json
 import numpy as np
 import pandas as pd
 
@@ -13,9 +14,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
 from utils import flip, accuracy, violation
-from ProxyConstraint import ProxyEqualizedOdds
+from ProxyConstraint import ProxyEqualizedOdds, ProxyEqualizedOdds2
 
-error_rate = [[0.35, 0.45], [0.10, 0.20]]
+error_rate = [[0.3, 0.4], [0.0, 0.0]]
 shap.initjs()
 
 X_raw, Y = shap.datasets.adult()
@@ -50,94 +51,222 @@ Y_noised = flip(Y_train, A_train, error_rate=error_rate)
 
 def run_clean(fairness_constraints):
     print(f"Start running experiment with clean data.")
+    all_results = {}
+    all_results['eps'] = fairness_constraints
+    all_results['accuracy'] = {
+        'train': [],
+        'test': []
+    }
 
-    unmitigated_predictor = LogisticRegression(solver='liblinear', fit_intercept=True)
+    all_results['violation'] = {
+        'train': [],
+        'test': []
+    }
 
-    # unmitigated_predictor.fit(X_train, Y_train)
-    unmitigated_predictor.fit(X_train, Y_train)
-    sweep = GridSearch(LogisticRegression(solver='liblinear', fit_intercept=True),
-                        constraints=EqualizedOdds(),
-                        grid_size=71)        
+    all_results['violation_male'] = {
+        'train': [],
+        'test': []            
+    }
 
-    sweep.fit(X_train, Y_train, sensitive_features=A_train)
-    predictors = [ unmitigated_predictor ] + [ z.predictor for z in sweep.all_results]
-
-    all_results_train, all_results_test = [], []
-    for predictor in predictors:
-        prediction_train = predictor.predict(X_train)
-        prediction_test = predictor.predict(X_test)
-
-        all_results_train.append({'accuracy': accuracy(prediction_train, Y_train), 'violation': violation(prediction_train, Y_train, A_train)})
-        all_results_test.append({'accuracy': accuracy(prediction_test, Y_test), 'violation': violation(prediction_test, Y_test, A_test)})
-    # print(all_results_train)
-    # print(all_results_test)
-
-    best_train, best_test = [], []
-    for constraint in fairness_constraints:
-        best = 0.0
-        for result in all_results_train:
-            if result['violation'] <= constraint and result['accuracy'] > best:
-                best = result['accuracy']
-        best_train.append(best)
-
-        best = 0.0
-        for result in all_results_test:
-            if result['violation'] <= constraint and result['accuracy'] > best:
-                best = result['accuracy']
-        best_test.append(best)
-    
-    return best_train, best_test
-
-def run(fairness_constraints, proxy=False, lnl=False):
-    print(f"Start running experiment with Proxy: {proxy}, Learning with Noisy Labels: {lnl}.")
-    all_results_train, all_results_test = [], []
+    all_results['violation_female'] = {
+        'train': [],
+        'test': []
+    }
 
     for eps in fairness_constraints:
         begin = time.time()
 
-        if proxy and lnl:
-            clf = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
-                        constraints=ProxyEqualizedOdds(error_rate=error_rate),
-                        eps=eps)
-            sweep = LearningWithNoisyLabels(clf=clf)
-        elif proxy:
+        sweep = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
+                        constraints=EqualizedOdds(),
+                        eps=eps)     
+
+        try:
+            sweep.fit(X_train, Y_train, sensitive_features=A_train)
+
+            prediction_train = sweep.predict(X_train)
+            prediction_test = sweep.predict(X_test)
+        except:
+            print(f"Fairlearn can't fit at fairness constraint {eps}")
+            pass
+
+        all_results['accuracy']['train'].append(accuracy(prediction_train, Y_train))
+        all_results['accuracy']['test'].append(accuracy(prediction_test, Y_test))
+
+        all_results['violation']['train'].append(violation(prediction_train, Y_train, A_train))
+        all_results['violation']['test'].append(violation(prediction_test, Y_test, A_test))
+
+        all_results['violation_male']['train'].append(violation(prediction_train, Y_train, A_train, grp=1))
+        all_results['violation_male']['test'].append(violation(prediction_test, Y_test, A_test, grp=1))         
+
+        all_results['violation_female']['train'].append(violation(prediction_train, Y_train, A_train, grp=0))
+        all_results['violation_female']['test'].append(violation(prediction_test, Y_test, A_test, grp=0))
+
+        print(f"Running fairness constraint: {eps}, Training Accuracy: {all_results['accuracy']['train']}, Test Accuracy: {all_results['accuracy']['test']}, Training Violation: {all_results['violation']['train']}, Test Violation: {all_results['violation']['test']}, Time cost: {time.time() - begin}")
+    
+    return all_results
+
+def run(fairness_constraints, use_proxy=False):
+    print(f"Start running experiment with Proxy: {use_proxy}.")
+    all_results = {}
+    all_results['eps'] = fairness_constraints
+    all_results['accuracy'] = {
+        'train': [],
+        'test': []
+    }
+
+    all_results['violation'] = {
+        'train': [],
+        'test': []
+    }
+
+    all_results['violation_male'] = {
+        'train': [],
+        'test': []            
+    }
+
+    all_results['violation_female'] = {
+        'train': [],
+        'test': []
+    }
+
+    for eps in fairness_constraints:
+        begin = time.time()
+
+        if use_proxy:
             sweep = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
                         constraints=ProxyEqualizedOdds(error_rate=error_rate),
                         eps=eps)
-
-        elif lnl:
-            clf = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
-                        constraints=EqualizedOdds(),
-                        eps=eps)
-            sweep = LearningWithNoisyLabels(clf=clf)
         else:
             sweep = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
                             constraints=EqualizedOdds(),
                             eps=eps)        
 
-        sweep.fit(X_train, Y_noised, sensitive_features=A_train)
-        
-        prediction_train = sweep.predict(X_train)
-        prediction_test = sweep.predict(X_test)
+        try:
+            sweep.fit(X_train, Y_noised, sensitive_features=A_train)
 
-        accuracy_train = accuracy(prediction_train, Y_train)
-        accuracy_test = accuracy(prediction_test, Y_test)
-        all_results_train.append(accuracy_train)
-        all_results_test.append(accuracy_test)
+            prediction_train = sweep.predict(X_train)
+            prediction_test = sweep.predict(X_test)
+        except:
+            print(f"Fairlearn can't fit at fairness constraint {eps}")
+            pass
 
-        print(f"Running fairness constraint: {eps}, Training Accuracy: {accuracy_train}, Test Accuracy: {accuracy_test}, Training Violation: {violation(prediction_train, Y_train, A_train)}, Test Violation: {violation(prediction_test, Y_test, A_test)}, Time cost: {time.time() - begin}")
+        all_results['accuracy']['train'].append(accuracy(prediction_train, Y_train))
+        all_results['accuracy']['test'].append(accuracy(prediction_test, Y_test))
+
+        all_results['violation']['train'].append(violation(prediction_train, Y_train, A_train))
+        all_results['violation']['test'].append(violation(prediction_test, Y_test, A_test))
+
+        all_results['violation_male']['train'].append(violation(prediction_train, Y_train, A_train, grp=1))
+        all_results['violation_male']['test'].append(violation(prediction_test, Y_test, A_test, grp=1))         
+
+        all_results['violation_female']['train'].append(violation(prediction_train, Y_train, A_train, grp=0))
+        all_results['violation_female']['test'].append(violation(prediction_test, Y_test, A_test, grp=0))
+
+        print(f"Running fairness constraint: {eps}, Training Accuracy: {all_results['accuracy']['train']}, Test Accuracy: {all_results['accuracy']['test']}, Training Violation: {all_results['violation']['train']}, Test Violation: {all_results['violation']['test']}, Time cost: {time.time() - begin}")
     
-    return all_results_train, all_results_test
+    return all_results
 
-fairness_constraints = [0.008 * i for i in range(1, 11)]
+def run_estimation(fairness_constraints, isEstimate=True):
+    def NearestNeighbor(X, A, i):
+        # print(X_train.shape)
+        distance = max(np.linalg.norm(X[i] - X[0]), np.linalg.norm(X[i] - X[1]))
+        nn = 0
+        for j in range(len(X)):
+            if i == j:
+                continue
+            if A[i]== A[j] and np.linalg.norm(X[i] - X[j]) < distance:
+                distance = np.linalg.norm(X[i] - X[j])
+                nn = j
+        return nn
 
-train_result1, test_result1 = run(fairness_constraints, proxy=True, lnl=False)
-# train_result2, test_result2 = run(fairness_constraints, proxy=False, lnl=True)
-train_result2, test_result2 = run_clean(fairness_constraints)
-train_result3, test_result3 = run(fairness_constraints, proxy=False, lnl=False)
-# train_result4, test_result4 = run(fairness_constraints, proxy=True, lnl=True)
+    def estimate_delta(X, A, Y):
+        c1 = np.array([0., 0.])
+        t = np.array([0., 0.])
+        num = np.array([0., 0.])
+        for i in range(len(X)):
+            num[int(A[i])] += 1.
+            if Y[i] == 1:
+                j = NearestNeighbor(X, A, i)
+                # print(i, j)
+                t[int(A[i])] += Y[i] == Y[j]
+                c1[int(A[i])] += 1
+        c1 = 2 * c1 / num
+        c2 = 2 * t / num
+        print(f"c1: {c1}, c2: {c2}")
+        return np.sqrt(2 * c2 - c1 * c1)
 
-with open('logs/result.txt', 'w') as f:
-    for i in range(len(fairness_constraints)):
-        # f.write(f"{fairness_constraints[i]}\t{train_result1[i]}\t{test_result1[i]}\t{train_result2[i]}\t{test_result2[i]}\t{train_result3[i]}\t{test_result3[i]}\t{train_result4[i]}\t{test_result4[i]}\n")
-        f.write(f"{fairness_constraints[i]}\t{train_result2[i]}\t{test_result2[i]}\t{train_result1[i]}\t{test_result1[i]}\t{train_result3[i]}\t{test_result3[i]}\n")
+    if isEstimate:
+        print(f"Start running proxy fairness constraint with estimated delta.")
+        delta = estimate_delta(X_train.values, A_train.values, Y_noised)
+        print(f"Estimated delta is {delta}.")
+    else:
+        print("Start running proxy fairness constraint with known delta.")
+        delta = np.array([1-error_rate[0][0]-error_rate[0][1], 1-error_rate[1][0]-error_rate[1][1]])
+        print(f"The known delta is {delta}.")
+
+    all_results = {}
+    all_results['eps'] = fairness_constraints
+    all_results['accuracy'] = {
+        'train': [],
+        'test': []
+    }
+
+    all_results['violation'] = {
+        'train': [],
+        'test': []
+    }
+
+    all_results['violation_male'] = {
+        'train': [],
+        'test': []            
+    }
+
+    all_results['violation_female'] = {
+        'train': [],
+        'test': []
+    }   
+
+    for eps in fairness_constraints:
+        begin = time.time()
+
+        sweep = ExponentiatedGradient(LogisticRegression(solver='liblinear', fit_intercept=True),
+                        constraints=ProxyEqualizedOdds2(delta=delta),
+                        eps=eps)     
+
+        try:
+            sweep.fit(X_train, Y_noised, sensitive_features=A_train)
+
+            prediction_train = sweep.predict(X_train)
+            prediction_test = sweep.predict(X_test)
+        except:
+            print(f"Fairlearn can't fit at fairness constraint {eps}")
+            pass
+
+        all_results['accuracy']['train'].append(accuracy(prediction_train, Y_train))
+        all_results['accuracy']['test'].append(accuracy(prediction_test, Y_test))
+
+        all_results['violation']['train'].append(violation(prediction_train, Y_train, A_train))
+        all_results['violation']['test'].append(violation(prediction_test, Y_test, A_test))
+
+        all_results['violation_male']['train'].append(violation(prediction_train, Y_train, A_train, grp=1))
+        all_results['violation_male']['test'].append(violation(prediction_test, Y_test, A_test, grp=1))         
+
+        all_results['violation_female']['train'].append(violation(prediction_train, Y_train, A_train, grp=0))
+        all_results['violation_female']['test'].append(violation(prediction_test, Y_test, A_test, grp=0))
+
+        print(f"Running fairness constraint: {eps}, Training Accuracy: {all_results['accuracy']['train']}, Test Accuracy: {all_results['accuracy']['test']}, Training Violation: {all_results['violation']['train']}, Test Violation: {all_results['violation']['test']}, Time cost: {time.time() - begin}")
+
+    return all_results
+
+fairness_constraints = [0.004 * i for i in range(1, 11)]
+results = {}
+results['proxy_fairness_constraint_with_estimated_delta'] = run_estimation(fairness_constraints, isEstimate=True)
+results['proxy_fairness_constraint_with_know_delta'] = run_estimation(fairness_constraints, isEstimate=False)
+results['clean_data'] = run_clean(fairness_constraints)
+results['surrogate_fairness_constraint'] = run(fairness_constraints, use_proxy=True)
+results['corrupted_data'] = run(fairness_constraints, use_proxy=False)
+
+filename = f"result{int(error_rate[0][0] * 100)}{int(error_rate[0][1] * 100)}{int(error_rate[1][0] * 100)}{int(error_rate[1][1] * 100)}"
+
+with open(f"logs/{filename}.json", 'w') as f:
+    json.dump(results, f)
