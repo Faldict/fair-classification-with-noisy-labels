@@ -1,7 +1,6 @@
 #################################
 #
 # File: ProxyConstraint.py
-# Author: NIPS Anoymous Authors
 # This code modifies some code from fairlearn.
 # 
 #################################

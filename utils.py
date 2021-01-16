@@ -1,7 +1,6 @@
 #################################
 #
 # File: utils.py
-# Author: NIPS Anoymous Authors
 # 
 #################################
 import random

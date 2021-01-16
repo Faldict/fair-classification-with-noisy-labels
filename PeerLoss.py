@@ -1,7 +1,6 @@
 #################################
 #
 # File: PeerLoss.py
-# Author: NIPS Anoymous Authors
 # This code modifies some code from cleanlab.
 # 
 #################################
