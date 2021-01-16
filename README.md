@@ -22,7 +22,7 @@ Specifically, the surrogate loss function and the group peer loss function is im
 The proxy fairness constraints are implemented in `ProxyConstraint.py`. The code for data preprocessing is 
 in `datasets.py`. `utils.py` defines some utility functions.
 
-## Citation
+## Reference
 
 If you found this code useful for your research, please cite the following paper:
 
