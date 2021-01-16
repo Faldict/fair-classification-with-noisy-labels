@@ -1,3 +1,9 @@
+#################################
+#
+# File: utils.py
+# Author: NIPS Anoymous Authors
+# 
+#################################
 import random
 import numpy as np
 from cleanlab.latent_estimation import estimate_py_noise_matrices_and_cv_pred_proba, estimate_py_and_noise_matrices_from_probabilities
